@@ -1,0 +1,30 @@
+# Virtual environment
+venv/
+
+# Data files (user content)
+data/audio/*
+data/thumbnails/*
+data/playlist.json
+!data/audio/.gitkeep
+!data/thumbnails/.gitkeep
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

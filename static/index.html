@@ -1,0 +1,740 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KidJukebox</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #1f2937;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #4b5563;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #6b7280;
+        }
+
+        /* Progress bar styling */
+        input[type="range"] {
+            -webkit-appearance: none;
+            background: transparent;
+            cursor: pointer;
+        }
+        input[type="range"]::-webkit-slider-runnable-track {
+            height: 8px;
+            background: #374151;
+            border-radius: 4px;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 16px;
+            width: 16px;
+            border-radius: 50%;
+            background: #ec4899;
+            margin-top: -4px;
+        }
+        input[type="range"]::-moz-range-track {
+            height: 8px;
+            background: #374151;
+            border-radius: 4px;
+        }
+        input[type="range"]::-moz-range-thumb {
+            height: 16px;
+            width: 16px;
+            border-radius: 50%;
+            background: #ec4899;
+            border: none;
+        }
+
+        /* Animation for currently playing */
+        @keyframes pulse-border {
+            0%, 100% { border-color: #ec4899; }
+            50% { border-color: #f472b6; }
+        }
+        .playing-card {
+            animation: pulse-border 2s ease-in-out infinite;
+        }
+
+        /* Loading spinner */
+        .spinner {
+            border: 3px solid #374151;
+            border-top: 3px solid #ec4899;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white min-h-screen flex flex-col">
+    <!-- Header -->
+    <header class="bg-gray-800 shadow-lg p-4 flex items-center justify-between">
+        <div class="flex items-center gap-3">
+            <span class="text-3xl">🎵</span>
+            <h1 class="text-2xl font-bold text-pink-400">KidJukebox</h1>
+        </div>
+        <div class="flex items-center gap-2">
+            <button id="btnPlaylist" onclick="showPlaylist()" class="px-4 py-2 rounded-lg bg-pink-600 hover:bg-pink-700 transition font-medium">
+                Playlist
+            </button>
+            <button id="btnSearch" onclick="showSearch()" class="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 transition font-medium">
+                Search
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Content Area -->
+    <main class="flex-1 overflow-auto p-4 pb-40">
+        <!-- Storage Info -->
+        <div id="storageInfo" class="mb-4 text-sm text-gray-400 flex items-center gap-4">
+            <span id="songCount">0 songs</span>
+            <span id="storageSize">0 MB</span>
+        </div>
+
+        <!-- Playlist View -->
+        <div id="playlistView">
+            <div id="playlistEmpty" class="text-center py-12 text-gray-400">
+                <p class="text-6xl mb-4">🎶</p>
+                <p class="text-xl mb-2">Your playlist is empty!</p>
+                <p>Search for songs and add them to your playlist.</p>
+            </div>
+            <div id="playlistItems" class="space-y-3"></div>
+        </div>
+
+        <!-- Search View -->
+        <div id="searchView" class="hidden">
+            <div class="mb-4">
+                <form onsubmit="performSearch(event)" class="flex gap-2">
+                    <input
+                        type="text"
+                        id="searchInput"
+                        placeholder="Search for a song..."
+                        class="flex-1 px-4 py-3 rounded-lg bg-gray-800 border border-gray-700 focus:border-pink-500 focus:outline-none text-lg"
+                    >
+                    <button type="submit" class="px-6 py-3 bg-pink-600 hover:bg-pink-700 rounded-lg transition font-medium">
+                        🔍
+                    </button>
+                </form>
+            </div>
+            <div id="searchLoading" class="hidden text-center py-8">
+                <div class="spinner mx-auto mb-4"></div>
+                <p class="text-gray-400">Searching...</p>
+            </div>
+            <div id="searchResults" class="space-y-3"></div>
+            <div id="searchEmpty" class="hidden text-center py-12 text-gray-400">
+                <p class="text-xl">No results found</p>
+            </div>
+        </div>
+    </main>
+
+    <!-- Now Playing Bar -->
+    <div id="nowPlayingBar" class="fixed bottom-0 left-0 right-0 bg-gray-800 border-t border-gray-700 p-4 shadow-lg">
+        <div class="max-w-4xl mx-auto">
+            <div class="flex items-center gap-4">
+                <!-- Thumbnail -->
+                <img id="npThumbnail" src="" alt="" class="w-16 h-16 rounded-lg object-cover bg-gray-700">
+
+                <!-- Song Info & Progress -->
+                <div class="flex-1 min-w-0">
+                    <p id="npTitle" class="font-medium truncate text-lg">No song playing</p>
+                    <div class="flex items-center gap-2 mt-1">
+                        <span id="npCurrentTime" class="text-sm text-gray-400 w-12">0:00</span>
+                        <input
+                            type="range"
+                            id="progressBar"
+                            min="0"
+                            max="100"
+                            value="0"
+                            class="flex-1"
+                            oninput="seekTo(this.value)"
+                        >
+                        <span id="npDuration" class="text-sm text-gray-400 w-12">0:00</span>
+                    </div>
+                </div>
+
+                <!-- Controls -->
+                <div class="flex items-center gap-2">
+                    <button onclick="playPrevious()" class="p-3 rounded-full hover:bg-gray-700 transition text-2xl">⏮️</button>
+                    <button id="btnPlayPause" onclick="togglePlayPause()" class="p-4 rounded-full bg-pink-600 hover:bg-pink-700 transition text-2xl">▶️</button>
+                    <button onclick="playNext()" class="p-3 rounded-full hover:bg-gray-700 transition text-2xl">⏭️</button>
+                    <button id="btnShuffle" onclick="toggleShuffle()" class="p-3 rounded-full hover:bg-gray-700 transition text-xl">🔀</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Preview Modal -->
+    <div id="previewModal" class="hidden fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+        <div class="bg-gray-800 rounded-2xl max-w-md w-full p-6 shadow-2xl">
+            <img id="previewThumbnail" src="" alt="" class="w-full aspect-video rounded-lg object-cover mb-4 bg-gray-700">
+            <h3 id="previewTitle" class="text-xl font-bold mb-2 line-clamp-2"></h3>
+            <p id="previewChannel" class="text-gray-400 mb-1"></p>
+            <p id="previewDuration" class="text-pink-400 mb-6"></p>
+
+            <div id="previewActions" class="flex gap-3">
+                <button onclick="closePreview()" class="flex-1 px-4 py-3 bg-gray-700 hover:bg-gray-600 rounded-lg transition font-medium">
+                    Cancel
+                </button>
+                <button onclick="downloadPreviewSong()" class="flex-1 px-4 py-3 bg-pink-600 hover:bg-pink-700 rounded-lg transition font-medium">
+                    Add to Playlist
+                </button>
+            </div>
+
+            <div id="previewDownloading" class="hidden text-center py-4">
+                <div class="spinner mx-auto mb-4"></div>
+                <p id="downloadProgress" class="text-gray-400">Downloading...</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Audio Element -->
+    <audio id="audioPlayer"></audio>
+
+    <script>
+        // =======================================================================
+        // Application State
+        // =======================================================================
+        let state = {
+            view: 'playlist',
+            searchQuery: '',
+            searchResults: [],
+            playlist: [],
+            currentSongIndex: -1,
+            isPlaying: false,
+            currentTime: 0,
+            duration: 0,
+            isDownloading: false,
+            previewSong: null,
+            shuffle: false,
+            shuffleOrder: [],
+            storageInfo: {
+                songCount: 0,
+                totalMB: 0
+            }
+        };
+
+        const audio = document.getElementById('audioPlayer');
+
+        // =======================================================================
+        // Initialization
+        // =======================================================================
+        async function init() {
+            await loadPlaylist();
+            await loadStorageInfo();
+            setupAudioEvents();
+            renderPlaylist();
+        }
+
+        function setupAudioEvents() {
+            audio.addEventListener('timeupdate', () => {
+                state.currentTime = audio.currentTime;
+                state.duration = audio.duration || 0;
+                updateProgress();
+            });
+
+            audio.addEventListener('ended', () => {
+                playNext();
+            });
+
+            audio.addEventListener('play', () => {
+                state.isPlaying = true;
+                updatePlayButton();
+            });
+
+            audio.addEventListener('pause', () => {
+                state.isPlaying = false;
+                updatePlayButton();
+            });
+
+            audio.addEventListener('loadedmetadata', () => {
+                state.duration = audio.duration;
+                updateProgress();
+            });
+        }
+
+        // =======================================================================
+        // API Calls
+        // =======================================================================
+        async function loadPlaylist() {
+            try {
+                const response = await fetch('/api/playlist');
+                const data = await response.json();
+                state.playlist = data.items || [];
+            } catch (error) {
+                console.error('Failed to load playlist:', error);
+                state.playlist = [];
+            }
+        }
+
+        async function loadStorageInfo() {
+            try {
+                const response = await fetch('/api/storage');
+                const data = await response.json();
+                state.storageInfo = {
+                    songCount: data.song_count,
+                    totalMB: data.total_mb
+                };
+                updateStorageDisplay();
+            } catch (error) {
+                console.error('Failed to load storage info:', error);
+            }
+        }
+
+        async function searchYouTube(query) {
+            const response = await fetch('/api/search', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ query, limit: 10 })
+            });
+            return await response.json();
+        }
+
+        async function downloadSong(videoId, title, thumbnailUrl, duration) {
+            console.log('[Download] Starting download for:', { videoId, title, duration });
+            console.log('[Download] Thumbnail URL:', thumbnailUrl);
+
+            const response = await fetch('/api/download', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    video_id: videoId,
+                    title: title,
+                    thumbnail_url: thumbnailUrl,
+                    duration: duration
+                })
+            });
+
+            console.log('[Download] Response status:', response.status, response.statusText);
+
+            const data = await response.json();
+            console.log('[Download] Response data:', data);
+
+            return data;
+        }
+
+        async function removeFromPlaylist(itemId) {
+            const response = await fetch(`/api/playlist/${itemId}`, {
+                method: 'DELETE'
+            });
+            return await response.json();
+        }
+
+        // =======================================================================
+        // View Management
+        // =======================================================================
+        function showPlaylist() {
+            state.view = 'playlist';
+            document.getElementById('playlistView').classList.remove('hidden');
+            document.getElementById('searchView').classList.add('hidden');
+            document.getElementById('btnPlaylist').classList.add('bg-pink-600');
+            document.getElementById('btnPlaylist').classList.remove('bg-gray-700');
+            document.getElementById('btnSearch').classList.remove('bg-pink-600');
+            document.getElementById('btnSearch').classList.add('bg-gray-700');
+        }
+
+        function showSearch() {
+            state.view = 'search';
+            document.getElementById('playlistView').classList.add('hidden');
+            document.getElementById('searchView').classList.remove('hidden');
+            document.getElementById('btnSearch').classList.add('bg-pink-600');
+            document.getElementById('btnSearch').classList.remove('bg-gray-700');
+            document.getElementById('btnPlaylist').classList.remove('bg-pink-600');
+            document.getElementById('btnPlaylist').classList.add('bg-gray-700');
+            document.getElementById('searchInput').focus();
+        }
+
+        // =======================================================================
+        // Search
+        // =======================================================================
+        async function performSearch(event) {
+            event.preventDefault();
+            const query = document.getElementById('searchInput').value.trim();
+            if (!query) return;
+
+            state.searchQuery = query;
+            document.getElementById('searchLoading').classList.remove('hidden');
+            document.getElementById('searchResults').innerHTML = '';
+            document.getElementById('searchEmpty').classList.add('hidden');
+
+            try {
+                const data = await searchYouTube(query);
+                state.searchResults = data.results || [];
+                renderSearchResults();
+            } catch (error) {
+                console.error('Search failed:', error);
+                state.searchResults = [];
+            }
+
+            document.getElementById('searchLoading').classList.add('hidden');
+        }
+
+        function renderSearchResults() {
+            const container = document.getElementById('searchResults');
+            const emptyEl = document.getElementById('searchEmpty');
+
+            if (state.searchResults.length === 0) {
+                container.innerHTML = '';
+                emptyEl.classList.remove('hidden');
+                return;
+            }
+
+            emptyEl.classList.add('hidden');
+            container.innerHTML = state.searchResults.map((result, idx) => `
+                <div class="search-result flex items-center gap-4 bg-gray-800 rounded-xl p-3 hover:bg-gray-750 cursor-pointer transition"
+                     data-index="${idx}">
+                    <img src="${escapeHtml(result.thumbnail_url)}" alt="" class="w-24 h-16 rounded-lg object-cover bg-gray-700">
+                    <div class="flex-1 min-w-0">
+                        <p class="font-medium truncate">${escapeHtml(result.title)}</p>
+                        <p class="text-sm text-gray-400">${escapeHtml(result.duration)} • ${escapeHtml(result.channel)}</p>
+                    </div>
+                    <button class="p-2 text-2xl hover:scale-110 transition">➕</button>
+                </div>
+            `).join('');
+
+            // Add click handlers using event delegation
+            container.querySelectorAll('.search-result').forEach(el => {
+                el.addEventListener('click', () => {
+                    const result = state.searchResults[el.dataset.index];
+                    showPreview(result.video_id, result.title, result.thumbnail_url, result.duration, result.channel);
+                });
+            });
+        }
+
+        // =======================================================================
+        // Preview Modal
+        // =======================================================================
+        function showPreview(videoId, title, thumbnailUrl, duration, channel) {
+            // Check if already in playlist
+            const existing = state.playlist.find(item => item.video_id === videoId);
+            if (existing) {
+                alert('This song is already in your playlist!');
+                return;
+            }
+
+            state.previewSong = { videoId, title, thumbnailUrl, duration, channel };
+
+            document.getElementById('previewThumbnail').src = thumbnailUrl;
+            document.getElementById('previewTitle').textContent = title;
+            document.getElementById('previewChannel').textContent = channel;
+            document.getElementById('previewDuration').textContent = duration;
+            document.getElementById('previewActions').classList.remove('hidden');
+            document.getElementById('previewDownloading').classList.add('hidden');
+            document.getElementById('previewModal').classList.remove('hidden');
+        }
+
+        function closePreview() {
+            state.previewSong = null;
+            document.getElementById('previewModal').classList.add('hidden');
+        }
+
+        async function downloadPreviewSong() {
+            console.log('[Download] downloadPreviewSong called');
+
+            if (!state.previewSong || state.isDownloading) {
+                console.log('[Download] Skipping - previewSong:', !!state.previewSong, 'isDownloading:', state.isDownloading);
+                return;
+            }
+
+            state.isDownloading = true;
+            document.getElementById('previewActions').classList.add('hidden');
+            document.getElementById('previewDownloading').classList.remove('hidden');
+            document.getElementById('downloadProgress').textContent = 'Downloading...';
+
+            try {
+                const { videoId, title, thumbnailUrl, duration } = state.previewSong;
+                console.log('[Download] Calling downloadSong with:', { videoId, title, duration });
+
+                const result = await downloadSong(videoId, title, thumbnailUrl, duration);
+
+                if (result.success) {
+                    console.log('[Download] Success! Reloading playlist...');
+                    await loadPlaylist();
+                    await loadStorageInfo();
+                    renderPlaylist();
+                    closePreview();
+                    showPlaylist();
+                } else {
+                    console.warn('[Download] Backend returned failure:', result.message);
+                    document.getElementById('downloadProgress').textContent = result.message || 'Download failed';
+                    document.getElementById('previewActions').classList.remove('hidden');
+                    document.getElementById('previewDownloading').classList.add('hidden');
+                }
+            } catch (error) {
+                console.error('[Download] Exception during download:', error);
+                console.error('[Download] Error name:', error.name);
+                console.error('[Download] Error message:', error.message);
+                document.getElementById('downloadProgress').textContent = 'Download failed';
+                document.getElementById('previewActions').classList.remove('hidden');
+                document.getElementById('previewDownloading').classList.add('hidden');
+            }
+
+            state.isDownloading = false;
+        }
+
+        // =======================================================================
+        // Playlist Rendering
+        // =======================================================================
+        function renderPlaylist() {
+            const container = document.getElementById('playlistItems');
+            const emptyEl = document.getElementById('playlistEmpty');
+
+            if (state.playlist.length === 0) {
+                container.innerHTML = '';
+                emptyEl.classList.remove('hidden');
+                return;
+            }
+
+            emptyEl.classList.add('hidden');
+            container.innerHTML = state.playlist.map((item, index) => {
+                const isPlaying = index === state.currentSongIndex;
+                return `
+                    <div class="flex items-center gap-4 bg-gray-800 rounded-xl p-3 ${isPlaying ? 'border-2 border-pink-500 playing-card' : ''} transition"
+                         onclick="playSong(${index})">
+                        <img src="/api/thumbnail/${item.thumbnail_file}" alt=""
+                             class="w-20 h-14 rounded-lg object-cover bg-gray-700"
+                             onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect fill=%22%23374151%22 width=%22100%22 height=%22100%22/><text x=%2250%22 y=%2255%22 text-anchor=%22middle%22 fill=%22%239ca3af%22 font-size=%2230%22>🎵</text></svg>'">
+                        <div class="flex-1 min-w-0">
+                            <p class="font-medium truncate ${isPlaying ? 'text-pink-400' : ''}">${escapeHtml(item.title)}</p>
+                            <p class="text-sm text-gray-400">${escapeHtml(item.duration)}</p>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            ${isPlaying ? '<span class="text-pink-400 text-xl">🎵</span>' : ''}
+                            <button onclick="event.stopPropagation(); deleteSong('${item.id}')"
+                                    class="p-2 text-gray-400 hover:text-red-400 transition">
+                                🗑️
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        async function deleteSong(itemId) {
+            if (!confirm('Remove this song from your playlist?')) return;
+
+            // Check if it's the currently playing song
+            const itemIndex = state.playlist.findIndex(item => item.id === itemId);
+            const wasPlaying = itemIndex === state.currentSongIndex;
+
+            try {
+                await removeFromPlaylist(itemId);
+                await loadPlaylist();
+                await loadStorageInfo();
+
+                // Adjust current song index if needed
+                if (wasPlaying) {
+                    audio.pause();
+                    state.currentSongIndex = -1;
+                    state.isPlaying = false;
+                    updateNowPlaying();
+                } else if (itemIndex < state.currentSongIndex) {
+                    state.currentSongIndex--;
+                }
+
+                renderPlaylist();
+            } catch (error) {
+                console.error('Failed to delete song:', error);
+            }
+        }
+
+        // =======================================================================
+        // Playback Controls
+        // =======================================================================
+        function playSong(index) {
+            if (index < 0 || index >= state.playlist.length) return;
+
+            state.currentSongIndex = index;
+            const song = state.playlist[index];
+
+            audio.src = `/api/audio/${song.audio_file}`;
+            audio.play();
+
+            updateNowPlaying();
+            renderPlaylist();
+        }
+
+        function togglePlayPause() {
+            if (state.currentSongIndex === -1 && state.playlist.length > 0) {
+                playSong(0);
+                return;
+            }
+
+            if (state.isPlaying) {
+                audio.pause();
+            } else {
+                audio.play();
+            }
+        }
+
+        function playNext() {
+            if (state.playlist.length === 0) return;
+
+            let nextIndex;
+            if (state.shuffle && state.shuffleOrder.length > 0) {
+                const currentPos = state.shuffleOrder.indexOf(state.currentSongIndex);
+                const nextPos = (currentPos + 1) % state.shuffleOrder.length;
+                nextIndex = state.shuffleOrder[nextPos];
+            } else {
+                nextIndex = (state.currentSongIndex + 1) % state.playlist.length;
+            }
+
+            playSong(nextIndex);
+        }
+
+        function playPrevious() {
+            if (state.playlist.length === 0) return;
+
+            // If more than 3 seconds into song, restart it
+            if (audio.currentTime > 3) {
+                audio.currentTime = 0;
+                return;
+            }
+
+            let prevIndex;
+            if (state.shuffle && state.shuffleOrder.length > 0) {
+                const currentPos = state.shuffleOrder.indexOf(state.currentSongIndex);
+                const prevPos = (currentPos - 1 + state.shuffleOrder.length) % state.shuffleOrder.length;
+                prevIndex = state.shuffleOrder[prevPos];
+            } else {
+                prevIndex = (state.currentSongIndex - 1 + state.playlist.length) % state.playlist.length;
+            }
+
+            playSong(prevIndex);
+        }
+
+        function toggleShuffle() {
+            state.shuffle = !state.shuffle;
+            const btn = document.getElementById('btnShuffle');
+
+            if (state.shuffle) {
+                btn.classList.add('bg-pink-600');
+                generateShuffleOrder();
+            } else {
+                btn.classList.remove('bg-pink-600');
+                state.shuffleOrder = [];
+            }
+        }
+
+        function generateShuffleOrder() {
+            state.shuffleOrder = Array.from({ length: state.playlist.length }, (_, i) => i);
+            // Fisher-Yates shuffle
+            for (let i = state.shuffleOrder.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [state.shuffleOrder[i], state.shuffleOrder[j]] = [state.shuffleOrder[j], state.shuffleOrder[i]];
+            }
+            // Move current song to front if playing
+            if (state.currentSongIndex !== -1) {
+                const currentPos = state.shuffleOrder.indexOf(state.currentSongIndex);
+                if (currentPos > 0) {
+                    state.shuffleOrder.splice(currentPos, 1);
+                    state.shuffleOrder.unshift(state.currentSongIndex);
+                }
+            }
+        }
+
+        function seekTo(value) {
+            if (state.duration > 0) {
+                audio.currentTime = (value / 100) * state.duration;
+            }
+        }
+
+        // =======================================================================
+        // UI Updates
+        // =======================================================================
+        function updateNowPlaying() {
+            const song = state.playlist[state.currentSongIndex];
+
+            if (song) {
+                document.getElementById('npThumbnail').src = `/api/thumbnail/${song.thumbnail_file}`;
+                document.getElementById('npTitle').textContent = song.title;
+            } else {
+                document.getElementById('npThumbnail').src = '';
+                document.getElementById('npTitle').textContent = 'No song playing';
+            }
+        }
+
+        function updateProgress() {
+            const progress = state.duration > 0 ? (state.currentTime / state.duration) * 100 : 0;
+            document.getElementById('progressBar').value = progress;
+            document.getElementById('npCurrentTime').textContent = formatTime(state.currentTime);
+            document.getElementById('npDuration').textContent = formatTime(state.duration);
+        }
+
+        function updatePlayButton() {
+            const btn = document.getElementById('btnPlayPause');
+            btn.textContent = state.isPlaying ? '⏸️' : '▶️';
+        }
+
+        function updateStorageDisplay() {
+            document.getElementById('songCount').textContent = `${state.storageInfo.songCount} songs`;
+            document.getElementById('storageSize').textContent = `${state.storageInfo.totalMB} MB`;
+        }
+
+        // =======================================================================
+        // Utilities
+        // =======================================================================
+        function formatTime(seconds) {
+            if (isNaN(seconds) || !isFinite(seconds)) return '0:00';
+            const mins = Math.floor(seconds / 60);
+            const secs = Math.floor(seconds % 60);
+            return `${mins}:${secs.toString().padStart(2, '0')}`;
+        }
+
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML.replace(/'/g, '&#39;').replace(/"/g, '&quot;');
+        }
+
+        // =======================================================================
+        // Keyboard Shortcuts
+        // =======================================================================
+        document.addEventListener('keydown', (e) => {
+            // Don't capture when typing in search
+            if (document.activeElement.tagName === 'INPUT') return;
+
+            switch(e.code) {
+                case 'Space':
+                    e.preventDefault();
+                    togglePlayPause();
+                    break;
+                case 'ArrowRight':
+                    e.preventDefault();
+                    audio.currentTime = Math.min(audio.currentTime + 10, audio.duration);
+                    break;
+                case 'ArrowLeft':
+                    e.preventDefault();
+                    audio.currentTime = Math.max(audio.currentTime - 10, 0);
+                    break;
+                case 'KeyN':
+                    e.preventDefault();
+                    playNext();
+                    break;
+                case 'KeyP':
+                    e.preventDefault();
+                    playPrevious();
+                    break;
+                case 'KeyS':
+                    e.preventDefault();
+                    toggleShuffle();
+                    break;
+            }
+        });
+
+        // Initialize on load
+        init();
+    </script>
+</body>
+</html>
