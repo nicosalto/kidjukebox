@@ -98,11 +98,17 @@ class LyricsResponse(BaseModel):
     status: str  # synced|plain|instrumental|none|manual
     synced: bool = False
     lines: List[LyricsLine] = []
+    timing_offset: float = 0.0  # user-adjusted timing shift in seconds
 
 
 class LyricsManualRequest(BaseModel):
     """Parent-supplied lyrics (raw LRC or plain text)"""
     text: str = Field(..., min_length=1, max_length=50000)
+
+
+class TimingOffsetRequest(BaseModel):
+    """Request model for setting a lyrics timing offset."""
+    offset: float  # seconds, positive = lyrics appear later
 
 
 class BackfillStatus(BaseModel):

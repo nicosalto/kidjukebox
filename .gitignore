@@ -7,6 +7,7 @@ data/thumbnails/*
 data/lyrics/*
 data/playlist.json
 data/playlist.json.bak
+data/timing_offsets.json
 !data/audio/.gitkeep
 !data/thumbnails/.gitkeep
 !data/lyrics/.gitkeep

@@ -26,12 +26,13 @@ from .models import (
     LyricsLine,
     LyricsResponse,
     LyricsManualRequest,
+    TimingOffsetRequest,
     BackfillStatus,
 )
 from components.youtube_search import get_searcher
 from components.youtube_download import get_downloader
 from components import lyrics as lyrics_lib
-from components.lyrics import get_lyrics_service
+from components.lyrics import get_lyrics_service, get_timing_offsets
 
 # App paths
 APP_DIR = Path(__file__).parent.parent
@@ -133,6 +134,7 @@ async def _resolve_lyrics(item: PlaylistItem) -> LyricsResponse:
     until an explicit refetch, so we do not re-query LRCLIB on every tap.
     """
     service = get_lyrics_service(str(LYRICS_DIR))
+    offsets = get_timing_offsets(str(DATA_DIR))
     status = item.lyrics_status
 
     # Never looked up before - do it now
@@ -144,13 +146,17 @@ async def _resolve_lyrics(item: PlaylistItem) -> LyricsResponse:
         status = result.status
 
     if status in (lyrics_lib.STATUS_NONE, lyrics_lib.STATUS_INSTRUMENTAL):
-        return LyricsResponse(video_id=item.video_id, status=status, synced=False, lines=[])
+        return LyricsResponse(
+            video_id=item.video_id, status=status, synced=False, lines=[],
+            timing_offset=offsets.get(item.video_id),
+        )
 
     text = service.load(item.video_id)
     if text is None:
         # File vanished - report as missing rather than pretending
         return LyricsResponse(
-            video_id=item.video_id, status=lyrics_lib.STATUS_NONE, synced=False, lines=[]
+            video_id=item.video_id, status=lyrics_lib.STATUS_NONE, synced=False, lines=[],
+            timing_offset=offsets.get(item.video_id),
         )
 
     parsed = lyrics_lib.parse_lrc(text)
@@ -159,6 +165,7 @@ async def _resolve_lyrics(item: PlaylistItem) -> LyricsResponse:
         status=status,
         synced=parsed.synced,
         lines=[LyricsLine(**line) for line in parsed.lines],
+        timing_offset=offsets.get(item.video_id),
     )
 
 
@@ -557,3 +564,31 @@ async def cleanup_storage():
         "removed_lyrics": removed_lyrics,
         "freed_mb": result["freed_mb"]
     }
+
+
+# ============================================================================
+# Timing Offset API  —  per-song manual timing adjustment
+# ============================================================================
+
+
+@app.get("/api/lyrics/{video_id}/offset")
+async def get_timing_offset(video_id: str):
+    """Get the saved timing offset for a song (seconds)."""
+    offsets = get_timing_offsets(str(DATA_DIR))
+    return {"video_id": video_id, "offset": offsets.get(video_id)}
+
+
+@app.put("/api/lyrics/{video_id}/offset")
+async def set_timing_offset(video_id: str, request: TimingOffsetRequest):
+    """Save a timing offset for a song so it persists across sessions."""
+    offsets = get_timing_offsets(str(DATA_DIR))
+    offsets.set(video_id, request.offset)
+    return {"video_id": video_id, "offset": request.offset, "success": True}
+
+
+@app.delete("/api/lyrics/{video_id}/offset")
+async def reset_timing_offset(video_id: str):
+    """Reset a song's timing offset to zero."""
+    offsets = get_timing_offsets(str(DATA_DIR))
+    offsets.delete(video_id)
+    return {"video_id": video_id, "offset": 0.0, "success": True}

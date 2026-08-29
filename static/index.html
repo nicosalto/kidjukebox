@@ -297,6 +297,18 @@
                 <p id="lyricsMessageText" class="text-2xl text-gray-300"></p>
             </div>
 
+            <!-- Timing Adjustment Toolbar -->
+            <div id="lyricsTimingToolbar" class="hidden shrink-0 px-4 py-2 flex items-center justify-center gap-2 bg-gray-900 bg-opacity-80 border-t border-gray-700 text-sm">
+                <span class="text-gray-400 mr-1">⏱</span>
+                <span id="timingOffsetDisplay" class="text-gray-300 font-mono w-16 text-center">+0.0s</span>
+                <span class="text-gray-500 mx-1">|</span>
+                <button onclick="adjustTiming(-0.5)" class="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-gray-300 transition text-xs font-medium" title="Shift lyrics 0.5s earlier">−0.5s</button>
+                <button onclick="adjustTiming(-0.1)" class="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-gray-300 transition text-xs font-medium" title="Shift lyrics 0.1s earlier">−0.1s</button>
+                <button onclick="resetTiming()" class="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-gray-400 transition text-xs font-medium" title="Reset timing to zero">Reset</button>
+                <button onclick="adjustTiming(0.1)" class="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-gray-300 transition text-xs font-medium" title="Shift lyrics 0.1s later">+0.1s</button>
+                <button onclick="adjustTiming(0.5)" class="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-gray-300 transition text-xs font-medium" title="Shift lyrics 0.5s later">+0.5s</button>
+            </div>
+
             <!-- Transport (the now playing bar is covered by this overlay) -->
             <div class="shrink-0 p-4 flex items-center justify-center gap-4 bg-gray-900 bg-opacity-70">
                 <button onclick="playPrevious()" class="p-3 rounded-full hover:bg-gray-700 transition text-2xl">⏮️</button>
@@ -332,6 +344,7 @@
             lyricsIndex: -1,       // index of the currently highlighted line
             lyricsOpen: false,
             lyricsRaf: null,
+            timingOffset: 0,       // per-song adjustment in seconds
             storageInfo: {
                 songCount: 0,
                 totalMB: 0
@@ -376,7 +389,8 @@
             // A seek while paused should still move the highlight
             audio.addEventListener('seeked', () => {
                 if (state.lyricsOpen && state.lyrics && state.lyrics.synced) {
-                    const index = findLyricIndex(audio.currentTime);
+                    const adjustedTime = audio.currentTime - state.timingOffset;
+                    const index = findLyricIndex(adjustedTime);
                     if (index !== state.lyricsIndex) {
                         state.lyricsIndex = index;
                         highlightLyricLine(index);
@@ -864,6 +878,7 @@
             // Already have this song's lyrics in memory
             if (state.lyrics && state.lyricsVideoId === song.video_id) {
                 renderLyrics();
+                updateTimingDisplay();
                 startLyricsSync();
                 return;
             }
@@ -878,6 +893,7 @@
                 state.lyrics = data;
                 state.lyricsVideoId = data.video_id;
                 state.lyricsIndex = -1;
+                state.timingOffset = data.timing_offset || 0;
 
                 // Reflect a freshly discovered miss in the playlist buttons
                 const entry = state.playlist.find(i => i.video_id === data.video_id);
@@ -887,6 +903,7 @@
                 }
 
                 renderLyrics();
+                updateTimingDisplay();
                 startLyricsSync();
             } catch (error) {
                 console.error('Failed to load lyrics:', error);
@@ -935,11 +952,13 @@
 
             if (!data || data.status === 'none' || !data.lines.length) {
                 showLyricsState('message', '🎵', 'No words for this song yet!');
+                document.getElementById('lyricsTimingToolbar').classList.add('hidden');
                 return;
             }
 
             if (data.status === 'instrumental') {
                 showLyricsState('message', '🎶', 'This song has no words - just music!');
+                document.getElementById('lyricsTimingToolbar').classList.add('hidden');
                 return;
             }
 
@@ -952,12 +971,17 @@
                 // Unsynced lyrics can still be tapped through; synced ones seek
                 if (data.synced && line.time !== null) {
                     el.style.cursor = 'pointer';
-                    el.onclick = () => { audio.currentTime = line.time; };
+                    // Clicking a line seeks to the corrected position:
+                    // lyrics time + offset = what currentTime should be
+                    el.onclick = () => { audio.currentTime = line.time + state.timingOffset; };
                 }
                 container.appendChild(el);
             });
 
             showLyricsState('lines');
+
+            // Show timing toolbar for synced lyrics (offset adjustments make sense)
+            document.getElementById('lyricsTimingToolbar').classList.toggle('hidden', !data.synced);
 
             // No timestamps: show the words evenly, and say why nothing moves
             document.getElementById('lyricsPlainNote').classList.toggle('hidden', data.synced);
@@ -1002,7 +1026,11 @@
         function syncLyricsFrame() {
             if (!state.lyricsOpen || !state.lyrics || !state.lyrics.synced) return;
 
-            const index = findLyricIndex(audio.currentTime);
+            // Apply the user's timing offset when searching for the current line.
+            // Negative offset  →  adjustedTime is later  →  highlight moves earlier.
+            // Positive offset  →  adjustedTime is earlier  →  highlight moves later.
+            const adjustedTime = audio.currentTime - state.timingOffset;
+            const index = findLyricIndex(adjustedTime);
             if (index !== state.lyricsIndex) {
                 state.lyricsIndex = index;
                 highlightLyricLine(index);
@@ -1046,6 +1074,44 @@
                 cancelAnimationFrame(state.lyricsRaf);
                 state.lyricsRaf = null;
             }
+        }
+
+        // =======================================================================
+        // Timing Adjustment  —  manually nudge lyrics into sync
+        // =======================================================================
+
+        async function saveTimingOffset(videoId, offset) {
+            try {
+                await fetch(`/api/lyrics/${videoId}/offset`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ offset })
+                });
+            } catch (error) {
+                console.error('Failed to save timing offset:', error);
+            }
+        }
+
+        function adjustTiming(delta) {
+            const newOffset = Math.round((state.timingOffset + delta) * 100) / 100;
+            // Clamp to a reasonable range (-30s to +30s)
+            if (newOffset < -30 || newOffset > 30) return;
+            state.timingOffset = newOffset;
+            updateTimingDisplay();
+            saveTimingOffset(state.lyricsVideoId, newOffset);
+        }
+
+        function resetTiming() {
+            state.timingOffset = 0;
+            updateTimingDisplay();
+            saveTimingOffset(state.lyricsVideoId, 0);
+        }
+
+        function updateTimingDisplay() {
+            const el = document.getElementById('timingOffsetDisplay');
+            if (!el) return;
+            const sign = state.timingOffset >= 0 ? '+' : '';
+            el.textContent = `${sign}${state.timingOffset.toFixed(1)}s`;
         }
 
         function updateLyricsButton() {

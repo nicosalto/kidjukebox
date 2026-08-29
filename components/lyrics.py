@@ -9,6 +9,8 @@ that playback keeps working exactly as before when offline.
 """
 
 import asyncio
+import json
+import logging
 import re
 import time
 from dataclasses import dataclass, field
@@ -365,8 +367,63 @@ class LyricsService:
         return LyricsResult(status=STATUS_NONE)
 
 
-# Module-level singleton
+# ============================================================================
+# Timing Offset Store — per-song manual timing adjustments
+# ============================================================================
+
+_TIMING_OFFSETS_FILE = "timing_offsets.json"
+_timing_offsets_cache: dict[str, float] | None = None
+
+
+class TimingOffsets:
+    """Persistent store of per-song timing offsets (seconds)."""
+
+    def __init__(self, data_dir: str):
+        self._path = Path(data_dir) / _TIMING_OFFSETS_FILE
+        self._offsets: dict[str, float] = {}
+        self._dirty = False
+        self._load()
+
+    def _load(self) -> None:
+        if self._path.exists():
+            try:
+                data = json.loads(self._path.read_text(encoding="utf-8"))
+                self._offsets = {k: float(v) for k, v in data.items() if v}
+            except Exception:
+                self._offsets = {}
+        else:
+            self._offsets = {}
+
+    def _save(self) -> None:
+        try:
+            self._path.write_text(
+                json.dumps(self._offsets, indent=2), encoding="utf-8"
+            )
+        except Exception as e:
+            logging.getLogger("kidjukebox.lyrics").warning(
+                "Failed to save timing offsets: %s", e
+            )
+
+    def get(self, video_id: str) -> float:
+        """Get timing offset for a video in seconds (0.0 = no adjustment)."""
+        return self._offsets.get(video_id, 0.0)
+
+    def set(self, video_id: str, offset: float) -> None:
+        """Set timing offset, persisting immediately."""
+        if offset == 0.0:
+            self._offsets.pop(video_id, None)
+        else:
+            self._offsets[video_id] = round(offset, 2)
+        self._save()
+
+    def delete(self, video_id: str) -> None:
+        self._offsets.pop(video_id, None)
+        self._save()
+
+
+# Module-level singletons
 _lyrics_service: Optional[LyricsService] = None
+_timing_offsets: Optional[TimingOffsets] = None
 
 
 def get_lyrics_service(lyrics_dir: str) -> LyricsService:
@@ -375,3 +432,11 @@ def get_lyrics_service(lyrics_dir: str) -> LyricsService:
     if _lyrics_service is None:
         _lyrics_service = LyricsService(lyrics_dir)
     return _lyrics_service
+
+
+def get_timing_offsets(data_dir: str) -> TimingOffsets:
+    """Get the shared TimingOffsets instance."""
+    global _timing_offsets
+    if _timing_offsets is None:
+        _timing_offsets = TimingOffsets(data_dir)
+    return _timing_offsets
