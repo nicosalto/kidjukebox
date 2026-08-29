@@ -4,9 +4,12 @@ venv/
 # Data files (user content)
 data/audio/*
 data/thumbnails/*
+data/lyrics/*
 data/playlist.json
+data/playlist.json.bak
 !data/audio/.gitkeep
 !data/thumbnails/.gitkeep
+!data/lyrics/.gitkeep
 
 # Python
 __pycache__/
@@ -28,3 +31,6 @@ build/
 # OS
 .DS_Store
 Thumbs.db
+
+# Logs
+*.log

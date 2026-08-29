@@ -62,6 +62,64 @@
             animation: pulse-border 2s ease-in-out infinite;
         }
 
+        /* ---- Fullscreen lyrics (karaoke) ---- */
+        #lyricsBackdrop {
+            filter: blur(40px) brightness(0.35);
+            transform: scale(1.15); /* hide the soft edges the blur creates */
+        }
+
+        #lyricsLines {
+            /* Enough padding that the first and last lines can still centre */
+            padding-top: 45vh;
+            padding-bottom: 45vh;
+            scroll-behavior: smooth;
+        }
+
+        .lyric-line {
+            transition: opacity 300ms ease, transform 300ms ease,
+                        color 300ms ease, text-shadow 300ms ease;
+            opacity: 0.25;
+            font-size: 1.25rem;
+            line-height: 2.25rem;
+            color: #d1d5db;
+            transform: scale(1);
+            transform-origin: left center;
+        }
+        .lyric-near {
+            opacity: 0.5;
+            font-size: 1.5rem;
+        }
+        .lyric-active {
+            opacity: 1;
+            color: #ffffff;
+            font-weight: 700;
+            font-size: 2rem;
+            line-height: 2.75rem;
+            transform: scale(1.04);
+            text-shadow: 0 0 24px rgba(236, 72, 153, 0.9);
+        }
+        /* Blank lines in the source act as breathing room, not clickable text */
+        .lyric-line:empty::after {
+            content: "\00a0";
+        }
+
+        @keyframes lyric-beat {
+            0%, 100% { transform: scale(1); opacity: 0.6; }
+            50%      { transform: scale(1.25); opacity: 1; }
+        }
+        .lyric-waiting span {
+            display: inline-block;
+            animation: lyric-beat 1.4s ease-in-out infinite;
+        }
+        .lyric-waiting span:nth-child(2) { animation-delay: 0.2s; }
+        .lyric-waiting span:nth-child(3) { animation-delay: 0.4s; }
+
+        @media (prefers-reduced-motion: reduce) {
+            #lyricsLines { scroll-behavior: auto; }
+            .lyric-line { transition: none; }
+            .lyric-waiting span { animation: none; }
+        }
+
         /* Loading spinner */
         .spinner {
             border: 3px solid #374151;
@@ -169,6 +227,8 @@
                     <button id="btnPlayPause" onclick="togglePlayPause()" class="p-4 rounded-full bg-pink-600 hover:bg-pink-700 transition text-2xl">▶️</button>
                     <button onclick="playNext()" class="p-3 rounded-full hover:bg-gray-700 transition text-2xl">⏭️</button>
                     <button id="btnShuffle" onclick="toggleShuffle()" class="p-3 rounded-full hover:bg-gray-700 transition text-xl">🔀</button>
+                    <button id="btnLyrics" onclick="openLyrics()" title="Sing along"
+                            class="p-3 rounded-full hover:bg-gray-700 transition text-2xl">🎤</button>
                 </div>
             </div>
         </div>
@@ -198,6 +258,55 @@
         </div>
     </div>
 
+    <!-- Fullscreen Lyrics (karaoke) -->
+    <!-- A fixed overlay, not the Fullscreen API: the launcher's iframe does not
+         grant the fullscreen permission, so requestFullscreen() would be blocked. -->
+    <div id="lyricsOverlay" class="hidden fixed inset-0 z-40 bg-gray-900 overflow-hidden">
+        <!-- Blurred album art backdrop -->
+        <img id="lyricsBackdrop" src="" alt="" class="absolute inset-0 w-full h-full object-cover">
+        <div class="absolute inset-0 bg-gray-900 bg-opacity-60"></div>
+
+        <div class="relative h-full flex flex-col">
+            <!-- Header -->
+            <div class="flex items-center gap-4 p-4 shrink-0">
+                <span class="text-3xl">🎤</span>
+                <p id="lyricsTitle" class="flex-1 min-w-0 truncate text-xl font-bold text-pink-400"></p>
+                <button onclick="closeLyrics()" aria-label="Close lyrics"
+                        class="p-3 rounded-full bg-gray-800 bg-opacity-80 hover:bg-gray-700 transition text-2xl leading-none">
+                    ✕
+                </button>
+            </div>
+
+            <!-- Shown when the source has no timestamps, so nothing highlights -->
+            <p id="lyricsPlainNote" class="hidden shrink-0 px-6 pb-2 text-sm text-gray-400 text-center">
+                Words only - can't follow along
+            </p>
+
+            <!-- Lines -->
+            <div id="lyricsScroll" class="flex-1 overflow-y-auto px-6 md:px-16">
+                <div id="lyricsLines" class="max-w-3xl mx-auto"></div>
+            </div>
+
+            <!-- States -->
+            <div id="lyricsLoading" class="hidden absolute inset-0 flex flex-col items-center justify-center">
+                <div class="spinner mb-4"></div>
+                <p class="text-gray-300">Finding the words...</p>
+            </div>
+            <div id="lyricsMessage" class="hidden absolute inset-0 flex flex-col items-center justify-center text-center px-8">
+                <p id="lyricsMessageEmoji" class="text-7xl mb-4">🎶</p>
+                <p id="lyricsMessageText" class="text-2xl text-gray-300"></p>
+            </div>
+
+            <!-- Transport (the now playing bar is covered by this overlay) -->
+            <div class="shrink-0 p-4 flex items-center justify-center gap-4 bg-gray-900 bg-opacity-70">
+                <button onclick="playPrevious()" class="p-3 rounded-full hover:bg-gray-700 transition text-2xl">⏮️</button>
+                <button id="btnLyricsPlayPause" onclick="togglePlayPause()"
+                        class="p-4 rounded-full bg-pink-600 hover:bg-pink-700 transition text-2xl">▶️</button>
+                <button onclick="playNext()" class="p-3 rounded-full hover:bg-gray-700 transition text-2xl">⏭️</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Audio Element -->
     <audio id="audioPlayer"></audio>
 
@@ -218,6 +327,11 @@
             previewSong: null,
             shuffle: false,
             shuffleOrder: [],
+            lyrics: null,          // { status, synced, lines: [{time, text}] }
+            lyricsVideoId: null,   // which song state.lyrics belongs to
+            lyricsIndex: -1,       // index of the currently highlighted line
+            lyricsOpen: false,
+            lyricsRaf: null,
             storageInfo: {
                 songCount: 0,
                 totalMB: 0
@@ -250,11 +364,24 @@
             audio.addEventListener('play', () => {
                 state.isPlaying = true;
                 updatePlayButton();
+                if (state.lyricsOpen) startLyricsSync();
             });
 
             audio.addEventListener('pause', () => {
                 state.isPlaying = false;
                 updatePlayButton();
+                stopLyricsSync();
+            });
+
+            // A seek while paused should still move the highlight
+            audio.addEventListener('seeked', () => {
+                if (state.lyricsOpen && state.lyrics && state.lyrics.synced) {
+                    const index = findLyricIndex(audio.currentTime);
+                    if (index !== state.lyricsIndex) {
+                        state.lyricsIndex = index;
+                        highlightLyricLine(index);
+                    }
+                }
             });
 
             audio.addEventListener('loadedmetadata', () => {
@@ -498,6 +625,7 @@
             emptyEl.classList.add('hidden');
             container.innerHTML = state.playlist.map((item, index) => {
                 const isPlaying = index === state.currentSongIndex;
+                const noLyrics = item.lyrics_status === 'none';
                 return `
                     <div class="flex items-center gap-4 bg-gray-800 rounded-xl p-3 ${isPlaying ? 'border-2 border-pink-500 playing-card' : ''} transition"
                          onclick="playSong(${index})">
@@ -510,6 +638,14 @@
                         </div>
                         <div class="flex items-center gap-2">
                             ${isPlaying ? '<span class="text-pink-400 text-xl">🎵</span>' : ''}
+                            <button onclick="event.stopPropagation(); openLyricsFor(${index})"
+                                    ${noLyrics ? 'disabled' : ''}
+                                    title="${noLyrics ? 'No words found for this song' : 'Sing along'}"
+                                    class="p-2 transition ${noLyrics
+                                        ? 'opacity-30 cursor-not-allowed'
+                                        : 'text-gray-400 hover:text-pink-400'}">
+                                🎤
+                            </button>
                             <button onclick="event.stopPropagation(); deleteSong('${item.id}')"
                                     class="p-2 text-gray-400 hover:text-red-400 transition">
                                 🗑️
@@ -537,6 +673,9 @@
                     audio.pause();
                     state.currentSongIndex = -1;
                     state.isPlaying = false;
+                    if (state.lyricsOpen) closeLyrics();
+                    state.lyrics = null;
+                    state.lyricsVideoId = null;
                     updateNowPlaying();
                 } else if (itemIndex < state.currentSongIndex) {
                     state.currentSongIndex--;
@@ -560,8 +699,20 @@
             audio.src = `/api/audio/${song.audio_file}`;
             audio.play();
 
+            // Drop the previous song's lyrics; reload if the view is open
+            if (state.lyricsVideoId !== song.video_id) {
+                stopLyricsSync();
+                state.lyrics = null;
+                state.lyricsVideoId = null;
+                state.lyricsIndex = -1;
+            }
+
             updateNowPlaying();
             renderPlaylist();
+
+            if (state.lyricsOpen) {
+                openLyrics();
+            }
         }
 
         function togglePlayPause() {
@@ -662,6 +813,8 @@
                 document.getElementById('npThumbnail').src = '';
                 document.getElementById('npTitle').textContent = 'No song playing';
             }
+
+            updateLyricsButton();
         }
 
         function updateProgress() {
@@ -672,13 +825,238 @@
         }
 
         function updatePlayButton() {
-            const btn = document.getElementById('btnPlayPause');
-            btn.textContent = state.isPlaying ? '⏸️' : '▶️';
+            const icon = state.isPlaying ? '⏸️' : '▶️';
+            document.getElementById('btnPlayPause').textContent = icon;
+            document.getElementById('btnLyricsPlayPause').textContent = icon;
         }
 
         function updateStorageDisplay() {
             document.getElementById('songCount').textContent = `${state.storageInfo.songCount} songs`;
             document.getElementById('storageSize').textContent = `${state.storageInfo.totalMB} MB`;
+        }
+
+        // =======================================================================
+        // Lyrics (fullscreen karaoke)
+        // =======================================================================
+        async function fetchLyrics(videoId) {
+            const response = await fetch(`/api/lyrics/${videoId}`);
+            if (!response.ok) throw new Error(`Lyrics request failed: ${response.status}`);
+            return await response.json();
+        }
+
+        function openLyricsFor(index) {
+            if (index !== state.currentSongIndex) {
+                playSong(index);
+            }
+            openLyrics();
+        }
+
+        async function openLyrics() {
+            const song = state.playlist[state.currentSongIndex];
+            if (!song) return;
+
+            state.lyricsOpen = true;
+            document.getElementById('lyricsOverlay').classList.remove('hidden');
+            document.getElementById('lyricsTitle').textContent = song.title;
+            document.getElementById('lyricsBackdrop').src = `/api/thumbnail/${song.thumbnail_file}`;
+            updatePlayButton();
+
+            // Already have this song's lyrics in memory
+            if (state.lyrics && state.lyricsVideoId === song.video_id) {
+                renderLyrics();
+                startLyricsSync();
+                return;
+            }
+
+            showLyricsState('loading');
+            try {
+                const data = await fetchLyrics(song.video_id);
+                // The user may have skipped to another song while we were waiting
+                const current = state.playlist[state.currentSongIndex];
+                if (!current || current.video_id !== data.video_id) return;
+
+                state.lyrics = data;
+                state.lyricsVideoId = data.video_id;
+                state.lyricsIndex = -1;
+
+                // Reflect a freshly discovered miss in the playlist buttons
+                const entry = state.playlist.find(i => i.video_id === data.video_id);
+                if (entry && entry.lyrics_status !== data.status) {
+                    entry.lyrics_status = data.status;
+                    renderPlaylist();
+                }
+
+                renderLyrics();
+                startLyricsSync();
+            } catch (error) {
+                console.error('Failed to load lyrics:', error);
+                showLyricsState('message', '😕', 'Could not load the words right now.');
+            }
+        }
+
+        function closeLyrics() {
+            state.lyricsOpen = false;
+            stopLyricsSync();
+            document.getElementById('lyricsOverlay').classList.add('hidden');
+        }
+
+        function toggleLyrics() {
+            if (state.lyricsOpen) {
+                closeLyrics();
+            } else {
+                openLyrics();
+            }
+        }
+
+        function showLyricsState(which, emoji, text) {
+            const loading = document.getElementById('lyricsLoading');
+            const message = document.getElementById('lyricsMessage');
+            const scroll = document.getElementById('lyricsScroll');
+
+            loading.classList.toggle('hidden', which !== 'loading');
+            message.classList.toggle('hidden', which !== 'message');
+            scroll.classList.toggle('hidden', which !== 'lines');
+
+            // The note only ever belongs with a rendered set of lines
+            if (which !== 'lines') {
+                document.getElementById('lyricsPlainNote').classList.add('hidden');
+            }
+
+            if (which === 'message') {
+                document.getElementById('lyricsMessageEmoji').textContent = emoji;
+                document.getElementById('lyricsMessageText').textContent = text;
+            }
+        }
+
+        function renderLyrics() {
+            const data = state.lyrics;
+            const container = document.getElementById('lyricsLines');
+            container.innerHTML = '';
+
+            if (!data || data.status === 'none' || !data.lines.length) {
+                showLyricsState('message', '🎵', 'No words for this song yet!');
+                return;
+            }
+
+            if (data.status === 'instrumental') {
+                showLyricsState('message', '🎶', 'This song has no words - just music!');
+                return;
+            }
+
+            // textContent, never innerHTML: this text comes from an external service
+            data.lines.forEach((line, i) => {
+                const el = document.createElement('p');
+                el.className = 'lyric-line';
+                el.dataset.index = i;
+                el.textContent = line.text;
+                // Unsynced lyrics can still be tapped through; synced ones seek
+                if (data.synced && line.time !== null) {
+                    el.style.cursor = 'pointer';
+                    el.onclick = () => { audio.currentTime = line.time; };
+                }
+                container.appendChild(el);
+            });
+
+            showLyricsState('lines');
+
+            // No timestamps: show the words evenly, and say why nothing moves
+            document.getElementById('lyricsPlainNote').classList.toggle('hidden', data.synced);
+            if (!data.synced) {
+                container.querySelectorAll('.lyric-line').forEach(el => {
+                    el.classList.add('lyric-near');
+                });
+            }
+
+            state.lyricsIndex = -1;
+            document.getElementById('lyricsScroll').scrollTop = 0;
+        }
+
+        function findLyricIndex(time) {
+            const lines = state.lyrics.lines;
+
+            // Fast path: still on the current line, or advanced by one
+            const i = state.lyricsIndex;
+            if (i >= 0 && lines[i].time <= time &&
+                (i === lines.length - 1 || lines[i + 1].time > time)) {
+                return i;
+            }
+            if (i + 1 < lines.length && lines[i + 1].time <= time &&
+                (i + 2 >= lines.length || lines[i + 2].time > time)) {
+                return i + 1;
+            }
+
+            // Seek or first run: binary search for the last line at or before `time`
+            let low = 0, high = lines.length - 1, found = -1;
+            while (low <= high) {
+                const mid = (low + high) >> 1;
+                if (lines[mid].time <= time) {
+                    found = mid;
+                    low = mid + 1;
+                } else {
+                    high = mid - 1;
+                }
+            }
+            return found;
+        }
+
+        function syncLyricsFrame() {
+            if (!state.lyricsOpen || !state.lyrics || !state.lyrics.synced) return;
+
+            const index = findLyricIndex(audio.currentTime);
+            if (index !== state.lyricsIndex) {
+                state.lyricsIndex = index;
+                highlightLyricLine(index);
+            }
+
+            state.lyricsRaf = requestAnimationFrame(syncLyricsFrame);
+        }
+
+        function highlightLyricLine(index) {
+            const container = document.getElementById('lyricsLines');
+            const lines = container.querySelectorAll('.lyric-line');
+
+            lines.forEach((el, i) => {
+                const distance = Math.abs(i - index);
+                el.classList.toggle('lyric-active', i === index);
+                el.classList.toggle('lyric-near', distance === 1);
+            });
+
+            // Before the first timestamp there is nothing to centre on
+            if (index < 0) return;
+
+            const active = lines[index];
+            if (!active) return;
+
+            const scroll = document.getElementById('lyricsScroll');
+            scroll.scrollTo({
+                top: active.offsetTop - (scroll.clientHeight / 2) + (active.offsetHeight / 2),
+                behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches
+                    ? 'auto' : 'smooth'
+            });
+        }
+
+        function startLyricsSync() {
+            stopLyricsSync();
+            if (!state.lyrics || !state.lyrics.synced) return;
+            state.lyricsRaf = requestAnimationFrame(syncLyricsFrame);
+        }
+
+        function stopLyricsSync() {
+            if (state.lyricsRaf !== null) {
+                cancelAnimationFrame(state.lyricsRaf);
+                state.lyricsRaf = null;
+            }
+        }
+
+        function updateLyricsButton() {
+            const song = state.playlist[state.currentSongIndex];
+            const btn = document.getElementById('btnLyrics');
+            const unavailable = !song || song.lyrics_status === 'none';
+
+            btn.disabled = unavailable;
+            btn.classList.toggle('opacity-30', unavailable);
+            btn.classList.toggle('cursor-not-allowed', unavailable);
+            btn.title = unavailable ? 'No words found for this song' : 'Sing along';
         }
 
         // =======================================================================
@@ -706,6 +1084,16 @@
             if (document.activeElement.tagName === 'INPUT') return;
 
             switch(e.code) {
+                case 'Escape':
+                    if (state.lyricsOpen) {
+                        e.preventDefault();
+                        closeLyrics();
+                    }
+                    break;
+                case 'KeyL':
+                    e.preventDefault();
+                    toggleLyrics();
+                    break;
                 case 'Space':
                     e.preventDefault();
                     togglePlayPause();

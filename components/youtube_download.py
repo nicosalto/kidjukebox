@@ -4,11 +4,27 @@ Uses yt-dlp for downloading audio and thumbnails
 """
 
 import asyncio
+import logging
 import os
+import shutil
 from pathlib import Path
 from typing import Optional, Callable
 import httpx
 import yt_dlp
+
+logger = logging.getLogger("kidjukebox.download")
+
+# Detect available JS runtime for yt-dlp YouTube extraction
+def _get_js_runtime() -> dict | None:
+    """Return the js_runtimes config dict if node is available."""
+    node_path = shutil.which("node")
+    if node_path:
+        logger.info("Node.js runtime found at %s", node_path)
+        return {"node": {"path": node_path}}
+    logger.warning("No Node.js runtime found - YouTube downloads may fail")
+    return None
+
+_JS_RUNTIMES = _get_js_runtime()
 
 
 class YouTubeDownloader:
@@ -61,8 +77,11 @@ class YouTubeDownloader:
             - duration: Duration string
             - error: Error message if failed
         """
+        logger.info("download_song called for video_id=%s", video_id)
+
         async with self._download_lock:
             if self._downloading:
+                logger.warning("Download already in progress, rejecting %s", video_id)
                 return {
                     "success": False,
                     "error": "Another download is already in progress"
@@ -77,7 +96,7 @@ class YouTubeDownloader:
 
             # Check if already downloaded
             if audio_path.exists():
-                # Get video info for title/duration
+                logger.info("Audio already exists for %s, skipping download", video_id)
                 info = await self._get_video_info(video_url)
                 return {
                     "success": True,
@@ -102,6 +121,7 @@ class YouTubeDownloader:
             )
 
             if not result["success"]:
+                logger.error("Audio download failed for %s: %s", video_id, result.get("error"))
                 return result
 
             # Download thumbnail
@@ -109,6 +129,8 @@ class YouTubeDownloader:
                 progress_callback("Downloading thumbnail...")
 
             await self._download_thumbnail(video_id, thumbnail_url, thumb_path)
+
+            logger.info("Song %s downloaded successfully", video_id)
 
             return {
                 "success": True,
@@ -120,6 +142,7 @@ class YouTubeDownloader:
             }
 
         except Exception as e:
+            logger.exception("Unexpected error downloading %s", video_id)
             return {
                 "success": False,
                 "error": str(e)
@@ -135,6 +158,7 @@ class YouTubeDownloader:
         progress_callback: Optional[Callable[[str], None]] = None
     ) -> dict:
         """Synchronous audio download using yt-dlp"""
+        logger.info("Starting audio download for %s", video_url)
 
         # Remove .mp3 extension for yt-dlp (it adds its own)
         output_template = output_path.replace(".mp3", "")
@@ -151,9 +175,12 @@ class YouTubeDownloader:
             "no_warnings": True,
             "extractaudio": True,
             "noplaylist": True,
-            # Bypass YouTube 403 errors
+            "no_color": True,
+            # JS runtime required by YouTube extraction since mid-2025
+            "js_runtimes": _JS_RUNTIMES,
+            # Bypass YouTube 403 errors with modern browser headers
             "http_headers": {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
             },
         }
 
@@ -171,15 +198,19 @@ class YouTubeDownloader:
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(video_url, download=True)
+                title = info.get("title", "Unknown")
+                duration = self._format_duration(info.get("duration", 0))
+                logger.info("Download complete: '%s' (%s)", title, duration)
 
                 return {
                     "success": True,
-                    "title": info.get("title", "Unknown"),
-                    "duration": self._format_duration(info.get("duration", 0))
+                    "title": title,
+                    "duration": duration,
                 }
 
         except yt_dlp.utils.DownloadError as e:
             error_msg = str(e)
+            logger.error("DownloadError for %s: %s", video_url, error_msg)
             if "age" in error_msg.lower():
                 return {"success": False, "error": "This video is age-restricted"}
             elif "unavailable" in error_msg.lower():
@@ -190,6 +221,7 @@ class YouTubeDownloader:
                 return {"success": False, "error": f"Download failed: {error_msg}"}
 
         except Exception as e:
+            logger.exception("Unexpected download error for %s", video_url)
             return {"success": False, "error": f"Download error: {str(e)}"}
 
     async def _download_thumbnail(
@@ -223,9 +255,11 @@ class YouTubeDownloader:
                         if "image" in content_type and len(response.content) > 1000:
                             output_path.write_bytes(response.content)
                             return True
-                except Exception:
+                except Exception as e:
+                    logger.debug("Thumbnail download failed for %s: %s", url, e)
                     continue
 
+        logger.warning("No thumbnail found for %s", video_id)
         return False
 
     async def _get_video_info(self, video_url: str) -> dict:
@@ -244,16 +278,20 @@ class YouTubeDownloader:
             "no_warnings": True,
             "extractaudio": False,
             "skip_download": True,
-            # Bypass YouTube 403 errors
+            "no_color": True,
+            # JS runtime required by YouTube extraction since mid-2025
+            "js_runtimes": _JS_RUNTIMES,
+            # Bypass YouTube 403 errors with modern browser headers
             "http_headers": {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
             },
         }
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 return ydl.extract_info(video_url, download=False)
-        except Exception:
+        except Exception as e:
+            logger.warning("Failed to get video info for %s: %s", video_url, e)
             return {}
 
     def _format_duration(self, seconds: int) -> str:

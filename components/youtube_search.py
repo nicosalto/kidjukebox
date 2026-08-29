@@ -4,8 +4,23 @@ Uses yt-dlp for searching videos (more reliable than youtube-search-python)
 """
 
 import asyncio
+import logging
+import shutil
 from typing import List, Optional
 import yt_dlp
+
+logger = logging.getLogger("kidjukebox.search")
+
+# Detect available JS runtime for yt-dlp YouTube extraction
+def _get_js_runtime() -> dict | None:
+    """Return the js_runtimes config dict if node is available."""
+    node_path = shutil.which("node")
+    if node_path:
+        return {"node": {"path": node_path}}
+    logger.warning("No Node.js runtime found - YouTube searches may fail")
+    return None
+
+_JS_RUNTIMES = _get_js_runtime()
 
 
 class YouTubeSearcher:
@@ -57,16 +72,22 @@ class YouTubeSearcher:
             'extract_flat': True,
             'skip_download': True,
             'default_search': 'ytsearch',
+            'no_color': True,
+            # JS runtime for extraction (flat search may not need it, but be safe)
+            'js_runtimes': _JS_RUNTIMES,
         }
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 # Use ytsearch prefix for YouTube search
                 search_query = f"ytsearch{limit}:{query}"
+                logger.info("Searching YouTube for: '%s'", query)
                 result = ydl.extract_info(search_query, download=False)
 
                 videos = []
                 entries = result.get('entries', []) if result else []
+
+                logger.info("Search returned %d results for '%s'", len(entries), query)
 
                 for item in entries:
                     if not item:
@@ -100,7 +121,7 @@ class YouTubeSearcher:
                 return videos
 
         except Exception as e:
-            print(f"Search error: {e}")
+            logger.error("Search error for '%s': %s", query, e)
             return []
 
     def _format_duration(self, seconds: int) -> str:
@@ -140,29 +161,36 @@ class YouTubeSearcher:
             'quiet': True,
             'no_warnings': True,
             'skip_download': True,
+            'no_color': True,
+            # JS runtime required by YouTube extraction since mid-2025
+            'js_runtimes': _JS_RUNTIMES,
         }
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 url = f"https://www.youtube.com/watch?v={video_id}"
+                logger.info("Getting video info for %s", video_id)
                 info = ydl.extract_info(url, download=False)
 
                 if not info:
+                    logger.warning("No info returned for %s", video_id)
                     return None
 
                 thumbnail_url = f"https://img.youtube.com/vi/{video_id}/mqdefault.jpg"
                 duration_secs = info.get('duration', 0)
 
-                return {
+                video_info = {
                     "video_id": video_id,
                     "title": info.get('title', 'Unknown Title'),
                     "thumbnail_url": thumbnail_url,
                     "duration": self._format_duration(int(duration_secs)) if duration_secs else "?",
                     "channel": info.get('channel', '') or info.get('uploader', 'Unknown')
                 }
+                logger.info("Got info for %s: '%s'", video_id, video_info["title"])
+                return video_info
 
         except Exception as e:
-            print(f"Error getting video info: {e}")
+            logger.error("Error getting video info for %s: %s", video_id, e)
             return None
 
 

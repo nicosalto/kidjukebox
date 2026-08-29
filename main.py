@@ -5,8 +5,30 @@ Entry point with CLI argument parsing
 """
 
 import argparse
+import logging
+import sys
 import uvicorn
 from pathlib import Path
+
+
+def setup_logging(debug: bool = False) -> None:
+    """Configure structured logging for the app."""
+    level = logging.DEBUG if debug else logging.INFO
+    formatter = logging.Formatter(
+        "[%(asctime)s] %(levelname)s [%(name)s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(formatter)
+
+    root = logging.getLogger()
+    root.setLevel(level)
+    root.addHandler(handler)
+
+    # Keep yt-dlp's own chatter quiet unless debug is on
+    logging.getLogger("yt_dlp").setLevel(logging.WARNING if not debug else logging.DEBUG)
+
+    logging.info("KidJukebox logging initialised (level=%s)", "DEBUG" if debug else "INFO")
 
 
 def main():
@@ -33,10 +55,13 @@ def main():
 
     args = parser.parse_args()
 
+    setup_logging(debug=args.debug)
+
     # Ensure data directories exist
     data_dir = Path(__file__).parent / "data"
     (data_dir / "audio").mkdir(parents=True, exist_ok=True)
     (data_dir / "thumbnails").mkdir(parents=True, exist_ok=True)
+    (data_dir / "lyrics").mkdir(parents=True, exist_ok=True)
 
     # Initialize playlist.json if it doesn't exist
     playlist_file = data_dir / "playlist.json"
